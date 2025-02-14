@@ -1,53 +1,47 @@
-name: deploy
-
+name: CD Pipeline
 on:
- push:
-  branches:
-      - main
-
+  push:
+    branches: [main]
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v3
-    
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v2
 
-      - name: Build Docker images
-        run: |
-          docker build -t fastapi-app:latest .
-
-      - name: "Tag Docker Images"
-        run: |
-         docker tag fastapi-app:latest ${{ secrets.DOCKER_HUB_USERNAME }}/fastapi-app:latest
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3 
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@master
         with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # Update package index and install dependencies
+            sudo apt-get update -y
+            sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
 
-      - name: "Push to Docker Hub"
-        run: |
-          docker push ${{ secrets.DOCKER_HUB_USERNAME }}/fastapi-app:latest
+            # Add Docker's official GPG key
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+            sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
 
-      - name: Add SSH private key
-        run: |
-         mkdir -p ~/.ssh
-         echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-         chmod 600 ~/.ssh/id_rsa
+            # Install Docker
+            sudo apt-get update -y
+            sudo apt-get install -y docker-ce docker-ce-cli containerd.io
 
-      - name: Add SSH known hosts #
-        run: |
-         ssh-keyscan -t rsa ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+            # Add the SSH user to the Docker group
+            sudo usermod -aG docker ${{ secrets.SSH_USERNAME }}
 
-      - name: Deploy to server
-        run: |
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.SSH_HOST }} << 'EOF'
-          sudo docker pull ${{ secrets.DOCKER_HUB_USERNAME }}/fastapi-app:latest
-          sudo docker stop fastapi-app || true
-          sudo docker rm fastapi-app || true
-          sudo docker run -d --name fastapi-app -p 8000:8000 ${{ secrets.DOCKER_HUB_USERNAME }}/fastapi-app:latest
-          EOF
+            # Install Docker Compose
+            sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
+
+            # Verify installations
+            docker --version
+            docker-compose --version
+
+            # Navigate to the project directory and deploy
+            cd /home/ubuntu/
+            git clone https://github.com/Faoziyah/fastapi-book-project-1.git
+            cd fastapi-book-project-1/
+            git pull
+            docker-compose up -d --build
